@@ -1,0 +1,108 @@
+name: Build and Deploy Crimson LoRA to RunPod
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: crimson-sdxl-lora
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/crimson-sdxl-lora:v1.0
+            ${{ secrets.DOCKER_USERNAME }}/crimson-sdxl-lora:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image info
+        run: |
+          echo "Image built and pushed:"
+          echo "  ${{ secrets.DOCKER_USERNAME }}/crimson-sdxl-lora:v1.0"
+
+  deploy-to-runpod:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install runpodctl
+        run: |
+          curl -sSL https://cli.runpod.net | bash
+          runpodctl version
+
+      - name: Authenticate with RunPod
+        env:
+          RUNPOD_API_KEY: *** secrets.RUNPOD_API_KEY }}
+        run: |
+          mkdir -p ~/.runpod
+          echo "apiKey = \"$RUNPOD_API_KEY\"" > ~/.runpod/config.toml
+          runpodctl user
+
+      - name: Create serverless template
+        env:
+          RUNPOD_API_KEY: *** secrets.RUNPOD_API_KEY }}
+        run: |
+          TEMPLATE_OUTPUT=$(runpodctl template create --name "crimson-lora-template" --serverless \
+            --image "${{ secrets.DOCKER_USERNAME }}/crimson-sdxl-lora:v1.0" \
+            --container-disk-in-gb 20 \
+            --env '{"MODE_TO_RUN":"serverless","TRIGGER_WORD":"crimson woman"}')
+          echo "$TEMPLATE_OUTPUT"
+          TEMPLATE_ID=$(echo "$TEMPLATE_OUTPUT" | grep -oP 'ID:\s*\K\w+' | head -1)
+          if [ -z "$TEMPLATE_ID" ]; then
+            TEMPLATE_ID=$(echo "$TEMPLATE_OUTPUT" | grep -oP '[a-zA-Z0-9]{10,}' | head -1)
+          fi
+          echo "TEMPLATE_ID=$TEMPLATE_ID" >> $GITHUB_ENV
+          echo "Extracted Template ID: $TEMPLATE_ID"
+
+      - name: Create serverless endpoint
+        env:
+          RUNPOD_API_KEY: *** secrets.RUNPOD_API_KEY }}
+        run: |
+          if [ -n "${{ env.TEMPLATE_ID }}" ]; then
+            ENDPOINT_OUTPUT=$(runpodctl serverless create \
+              --template-id "${{ env.TEMPLATE_ID }}" \
+              --name "crimson-lora-endpoint" \
+              --gpu-id "NVIDIA GeForce RTX 4090" \
+              --workers-min 0 \
+              --workers-max 2 \
+              --idle-timeout 60)
+            echo "$ENDPOINT_OUTPUT"
+            ENDPOINT_ID=$(echo "$ENDPOINT_OUTPUT" | grep -oP 'ID:\s*\K\w+' | head -1)
+            if [ -z "$ENDPOINT_ID" ]; then
+              ENDPOINT_ID=$(echo "$ENDPOINT_OUTPUT" | grep -oP '[a-zA-Z0-9]{10,}' | head -1)
+            fi
+            echo "ENDPOINT_ID=$ENDPOINT_ID" >> $GITHUB_ENV
+            echo "Extracted Endpoint ID: $ENDPOINT_ID"
+          else
+            echo "ERROR: Template ID not found, skipping endpoint creation"
+            exit 1
+          fi
+
+      - name: Save deployment info
+        run: |
+          echo "=== Deployment Summary ==="
+          echo "Template ID: ${{ env.TEMPLATE_ID }}"
+          echo "Endpoint ID: ${{ env.ENDPOINT_ID }}"
+          echo "Docker Image: ${{ secrets.DOCKER_USERNAME }}/crimson-sdxl-lora:v1.0"
+          echo "========================"
