@@ -53,7 +53,7 @@ jobs:
 
       - name: Authenticate with RunPod
         env:
-          RUNPOD_API_KEY: *** secrets.RUNPOD_API_KEY }}
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
         run: |
           mkdir -p ~/.runpod
           echo "apiKey = \"$RUNPOD_API_KEY\"" > ~/.runpod/config.toml
@@ -61,7 +61,7 @@ jobs:
 
       - name: Create serverless template
         env:
-          RUNPOD_API_KEY: *** secrets.RUNPOD_API_KEY }}
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
         run: |
           TEMPLATE_OUTPUT=$(runpodctl template create --name "crimson-lora-template" --serverless \
             --image "${{ secrets.DOCKER_USERNAME }}/crimson-sdxl-lora:v1.0" \
@@ -77,7 +77,7 @@ jobs:
 
       - name: Create serverless endpoint
         env:
-          RUNPOD_API_KEY: *** secrets.RUNPOD_API_KEY }}
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
         run: |
           if [ -n "${{ env.TEMPLATE_ID }}" ]; then
             ENDPOINT_OUTPUT=$(runpodctl serverless create \
